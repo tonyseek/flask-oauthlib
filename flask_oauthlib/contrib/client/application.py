@@ -15,7 +15,7 @@ except ImportError:
 
 from flask import current_app, redirect, request
 from requests_oauthlib import OAuth1Session, OAuth2Session
-from oauthlib.oauth2.rfc6749.errors import MissingCodeError
+from oauthlib.oauth2.rfc6749.errors import OAuth2Error, MissingCodeError
 from werkzeug.utils import import_string
 
 from .descriptor import OAuthProperty, WebSessionData
@@ -52,6 +52,9 @@ class BaseApplication(object):
                 raise TypeError('descriptor %r not found' % k)
             setattr(self, k, v)
 
+        self._tokengetter = None
+        self._errorhandlers = {}
+
     def __repr__(self):
         class_name = self.__class__.__name__
         return '<%s:%s at %s>' % (class_name, self.name, hex(id(self)))
@@ -60,13 +63,44 @@ class BaseApplication(object):
         self._tokengetter = fn
         return fn
 
+    def errorhandler(self, name_or_exception):
+        """Registers function to handle OAuth errors raised while accessing
+        remote resources.
+
+        Example::
+
+            @oauthapp.errorhandler('missing_token')
+            def handle_missing_token(error):
+                return redirect(url_for('users.login', r='missing_token'))
+
+        Or::
+
+            @oauthapp.errorhandler(MissingTokenError)
+            def handle_missing_token(error):
+                return redirect(url_for('users.login', r='missing_token'))
+        """
+        if isinstance(name_or_exception, OAuth2Error):
+            name = name_or_exception.error
+        elif isinstance(name_or_exception, str):
+            name = name_or_exception
+        else:
+            raise TypeError('require error name of exception type')
+
+        handlers = self._errorhandlers.setdefault(name, [])
+
+        def decorator(fn):
+            handlers.append(fn)
+            return fn
+
+        return decorator
+
     def obtain_token(self):
         """Obtains the access token by calling ``tokengetter`` which was
         defined by users.
 
         :returns: token or ``None``.
         """
-        tokengetter = getattr(self, '_tokengetter', None)
+        tokengetter = self._tokengetter
         if tokengetter is None:
             raise RuntimeError('%r missing tokengetter' % self)
         return tokengetter()
@@ -338,6 +372,15 @@ class OAuth2Application(BaseApplication):
                     ' It may put you in danger of the Man-in-the-middle attack'
                     ' while using OAuth 2.', RuntimeWarning)
             yield
+
+    def request(self, *args, **kwargs):
+        try:
+            return super(OAuth2Application, self).request(*args, **kwargs)
+        except OAuth2Error as e:
+            handlers = self._errorhandlers.get(e.error, [])
+            results = [handler(e) for handler in handlers]
+            if not results or all(not r for r in results):
+                raise
 
 
 def _hash_token(application, token):
