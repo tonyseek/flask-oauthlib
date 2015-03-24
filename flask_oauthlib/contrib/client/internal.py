@@ -8,3 +8,6 @@ class RequestTermination(Exception):
     :param response: a response object.
     :type response: :class:`werkzeug.wrappers.Response`
     """
+
+    def __init__(self, response):
+        self.response = response

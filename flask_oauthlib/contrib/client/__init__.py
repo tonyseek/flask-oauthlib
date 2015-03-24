@@ -33,9 +33,8 @@ class OAuth(object):
         app.extensions[self.state_key] = OAuthState()
 
         @app.errorhandler(RequestTermination)
-        def handle_request_termination(error):
-            response = error.args[0]
-            return response
+        def handle_request_termination(exception):
+            return exception.response
 
     def add_remote_app(self, remote_app, name=None, **kwargs):
         """Adds remote application and applies custom attributes on it.
