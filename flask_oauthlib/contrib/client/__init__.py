@@ -4,6 +4,7 @@ from flask import current_app
 from werkzeug.local import LocalProxy
 
 from .application import OAuth1Application, OAuth2Application
+from .internal import RequestTermination
 
 
 __all__ = ['OAuth', 'OAuth1Application', 'OAuth2Application']
@@ -30,6 +31,11 @@ class OAuth(object):
     def init_app(self, app):
         app.extensions = getattr(app, 'extensions', {})
         app.extensions[self.state_key] = OAuthState()
+
+        @app.errorhandler(RequestTermination)
+        def handle_request_termination(error):
+            response = error.args[0]
+            return response
 
     def add_remote_app(self, remote_app, name=None, **kwargs):
         """Adds remote application and applies custom attributes on it.

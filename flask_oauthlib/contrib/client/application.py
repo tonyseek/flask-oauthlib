@@ -16,11 +16,13 @@ except ImportError:
 from flask import current_app, redirect, request
 from requests_oauthlib import OAuth1Session, OAuth2Session
 from oauthlib.oauth2.rfc6749.errors import OAuth2Error, MissingCodeError
+from werkzeug.wrappers import Response
 from werkzeug.utils import import_string
 
 from .descriptor import OAuthProperty, WebSessionData
 from .structure import OAuth1Response, OAuth2Response
 from .exceptions import AccessTokenNotFound
+from .internal import RequestTermination
 
 
 __all__ = ['OAuth1Application', 'OAuth2Application']
@@ -77,7 +79,7 @@ class BaseApplication(object):
 
             @oauthapp.errorhandler(MissingTokenError)
             def handle_missing_token(error):
-                return redirect(url_for('users.login', r='missing_token'))
+                pass
         """
         if isinstance(name_or_exception, OAuth2Error):
             name = name_or_exception.error
@@ -149,6 +151,25 @@ class BaseApplication(object):
                   or ``None`` if the authorization has been denied.
         """
         raise NotImplementedError
+
+    @contextlib.contextmanager
+    def handle_errors(self, exception):
+        try:
+            yield
+        except exception as e:
+            handlers = self._errorhandlers.get(e.error, [])
+            results = [handler(e) for handler in handlers]
+            for result in results:
+                # terminates current request
+                if isinstance(result, Response):
+                    raise RequestTermination(result)
+            else:
+                raise
+            # to suppress errors, handlers should return least one truthy value
+            if any(result for result in results):
+                return
+            else:
+                raise
 
     def request(self, method, url, token=None, *args, **kwargs):
         if token is None:
@@ -374,13 +395,8 @@ class OAuth2Application(BaseApplication):
             yield
 
     def request(self, *args, **kwargs):
-        try:
+        with self.handle_errors(OAuth2Error):
             return super(OAuth2Application, self).request(*args, **kwargs)
-        except OAuth2Error as e:
-            handlers = self._errorhandlers.get(e.error, [])
-            results = [handler(e) for handler in handlers]
-            if not results or all(not r for r in results):
-                raise
 
 
 def _hash_token(application, token):
